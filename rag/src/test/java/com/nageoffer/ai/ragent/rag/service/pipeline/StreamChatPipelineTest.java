@@ -40,6 +40,8 @@ import com.nageoffer.ai.ragent.rag.core.source.SourcesAssembler;
 import com.nageoffer.ai.ragent.rag.dto.IntentGroup;
 import com.nageoffer.ai.ragent.rag.dto.RetrievalContext;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
+import com.nageoffer.ai.ragent.rag.service.stat.KbRetrievalStatContext;
+import com.nageoffer.ai.ragent.rag.service.stat.KbRetrievalStatRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -84,6 +86,8 @@ class StreamChatPipelineTest {
     private GroundingChunksAssembler groundingChunksAssembler;
     @Mock
     private CitationContextEnricher citationContextEnricher;
+    @Mock
+    private KbRetrievalStatRecorder kbRetrievalStatRecorder;
 
     @InjectMocks
     private StreamChatPipeline pipeline;
@@ -192,5 +196,44 @@ class StreamChatPipelineTest {
         ChatMessage systemMessage = chatRequest.getValue().getMessages().get(0);
         assertEquals(AnswerStyle.applyInstruction("# 系统聊天助手", AnswerStyle.CASUAL),
                 systemMessage.getContent(), "系统提示词应为基础提示词 + 风格指令");
+    }
+
+    @Test
+    void recordsKbRetrievalStatWithQuestionMessageId() {
+        StreamCallback callback = org.mockito.Mockito.mock(StreamCallback.class);
+        RewriteResult rewriteResult = new RewriteResult("改写问题", List.of("改写问题"));
+        List<SubQuestionIntent> subIntents = List.of(new SubQuestionIntent("改写问题", List.of()));
+        RetrievalContext retrievalContext = RetrievalContext.builder()
+                .kbContext("<content>资料</content>")
+                .intentChunks(Map.of())
+                .eligibleIntentIds(Set.of())
+                .build();
+
+        when(memoryService.load("conversation-1", "user-1")).thenReturn(List.of());
+        when(memoryService.append(any(), any(), any())).thenReturn("message-1");
+        when(queryRewriteService.rewriteWithSplit("原问题", List.of())).thenReturn(rewriteResult);
+        when(intentResolver.resolve(rewriteResult)).thenReturn(subIntents);
+        when(guidanceService.detectAmbiguity("改写问题", subIntents)).thenReturn(GuidanceDecision.none());
+        when(intentResolver.isSystemOnly(anyList())).thenReturn(false);
+        when(retrievalEngine.retrieve(subIntents)).thenReturn(retrievalContext);
+        when(intentResolver.mergeIntentGroup(subIntents)).thenReturn(new IntentGroup(List.of(), List.of()));
+        when(citationContextEnricher.enrich("<content>资料</content>", List.of()))
+                .thenReturn("<content>资料</content>");
+        when(promptBuilder.buildStructuredMessages(any(), anyList(), any(), anyList())).thenReturn(List.of());
+
+        pipeline.execute(StreamChatContext.builder()
+                .question("原问题")
+                .conversationId("conversation-1")
+                .taskId("task-1")
+                .userId("user-1")
+                .callback(callback)
+                .build());
+
+        ArgumentCaptor<KbRetrievalStatContext> contextCaptor = ArgumentCaptor.forClass(KbRetrievalStatContext.class);
+        verify(kbRetrievalStatRecorder).record(any(), any(), contextCaptor.capture());
+        assertEquals("task-1", contextCaptor.getValue().taskId());
+        assertEquals("conversation-1", contextCaptor.getValue().conversationId());
+        assertEquals("message-1", contextCaptor.getValue().questionMessageId(),
+                "loadMemory 落库返回的提问消息 ID 应回填进埋点上下文");
     }
 }

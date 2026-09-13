@@ -15,20 +15,10 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.admin.service;
+package com.nageoffer.ai.ragent.rag.dao.mapper;
 
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardPerformanceVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.nageoffer.ai.ragent.rag.dao.entity.KbRetrievalStatDO;
 
-public interface DashboardService {
-
-    DashboardOverviewVO loadOverview(String window);
-
-    DashboardPerformanceVO loadPerformance(String window);
-
-    DashboardTrendsVO loadTrends(String metric, String window, String granularity);
-
-    DashboardKbHitRateVO loadKbHitRate(String window);
+public interface KbRetrievalStatMapper extends BaseMapper<KbRetrievalStatDO> {
 }

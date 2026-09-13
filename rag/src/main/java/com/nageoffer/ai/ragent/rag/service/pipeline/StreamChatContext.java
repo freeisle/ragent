@@ -60,4 +60,10 @@ public class StreamChatContext {
 
     @Setter
     private List<SubQuestionIntent> subIntents;
+
+    /**
+     * 提问消息 ID（loadMemory 落库后回填），埋点与排障用
+     */
+    @Setter
+    private String questionMessageId;
 }

@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.admin.controller;
 
+import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardPerformanceVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
@@ -51,5 +52,10 @@ public class DashboardController {
                                             @RequestParam(required = false) String window,
                                             @RequestParam(required = false) String granularity) {
         return Results.success(dashboardService.loadTrends(metric, window, granularity));
+    }
+
+    @GetMapping("/kb-hit-rate")
+    public Result<DashboardKbHitRateVO> kbHitRate(@RequestParam(required = false) String window) {
+        return Results.success(dashboardService.loadKbHitRate(window));
     }
 }

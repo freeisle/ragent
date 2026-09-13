@@ -43,6 +43,8 @@ import com.nageoffer.ai.ragent.rag.core.source.SourcesAssembler;
 import com.nageoffer.ai.ragent.rag.dto.IntentGroup;
 import com.nageoffer.ai.ragent.rag.dto.RetrievalContext;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
+import com.nageoffer.ai.ragent.rag.service.stat.KbRetrievalStatContext;
+import com.nageoffer.ai.ragent.rag.service.stat.KbRetrievalStatRecorder;
 import com.nageoffer.ai.ragent.framework.web.StreamTaskManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +78,7 @@ public class StreamChatPipeline {
     private final SourcesAssembler sourcesAssembler;
     private final GroundingChunksAssembler groundingChunksAssembler;
     private final CitationContextEnricher citationContextEnricher;
+    private final KbRetrievalStatRecorder kbRetrievalStatRecorder;
 
     /**
      * 执行流式对话管道
@@ -106,6 +109,7 @@ public class StreamChatPipeline {
         List<ChatMessage> history = memoryService.load(ctx.getConversationId(), ctx.getUserId());
         String questionMessageId = memoryService.append(
                 ctx.getConversationId(), ctx.getUserId(), ChatMessage.user(ctx.getQuestion()));
+        ctx.setQuestionMessageId(questionMessageId);
         ctx.getCallback().onReplyToMessageId(questionMessageId);
         ctx.setHistory(history);
     }
@@ -178,6 +182,10 @@ public class StreamChatPipeline {
 
         // 检索完成后建立唯一来源编号：同一列表用于完成事件、来源面板与消息落库，开启引用时还作为行内角标编号
         List<SourceRef> sources = sourcesAssembler.assemble(retrievalCtx.getIntentChunks());
+        // 埋点：检索完成后按知识库批量落统计（内部降级，不影响主链路）
+        kbRetrievalStatRecorder.record(retrievalCtx.getIntentChunks(), sources,
+                new KbRetrievalStatContext(ctx.getConversationId(), ctx.getTaskId(),
+                        ctx.getUserId(), ctx.getQuestionMessageId()));
         ctx.getCallback().onSources(sources);
         // 开关关闭时这一步只负责清掉上下文里的内部 docId，不注入编号
         retrievalCtx.setKbContext(citationContextEnricher.enrich(retrievalCtx.getKbContext(), sources));

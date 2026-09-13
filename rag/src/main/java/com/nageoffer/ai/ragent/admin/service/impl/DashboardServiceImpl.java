@@ -19,6 +19,8 @@ package com.nageoffer.ai.ragent.admin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateItemVO;
+import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewGroupVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewKpiVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
@@ -27,11 +29,15 @@ import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendPointVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendSeriesVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
 import com.nageoffer.ai.ragent.admin.service.DashboardService;
+import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeBaseDO;
+import com.nageoffer.ai.ragent.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationMessageDO;
+import com.nageoffer.ai.ragent.rag.dao.entity.KbRetrievalStatDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.RagTraceRunDO;
 import com.nageoffer.ai.ragent.rag.dao.mapper.ConversationMapper;
 import com.nageoffer.ai.ragent.rag.dao.mapper.ConversationMessageMapper;
+import com.nageoffer.ai.ragent.rag.dao.mapper.KbRetrievalStatMapper;
 import com.nageoffer.ai.ragent.rag.dao.mapper.RagTraceRunMapper;
 import com.nageoffer.ai.ragent.user.dao.entity.UserDO;
 import com.nageoffer.ai.ragent.user.dao.mapper.UserMapper;
@@ -51,6 +57,8 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -63,12 +71,15 @@ public class DashboardServiceImpl implements DashboardService {
     private static final String GRANULARITY_DAY = "day";
     private static final String GRANULARITY_HOUR = "hour";
     private static final long SLOW_LATENCY_THRESHOLD_MS = 20000L;
+    private static final String DELETED_KB_NAME = "已删除知识库";
     private static final DateTimeFormatter HOUR_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UserMapper userMapper;
     private final ConversationMapper conversationMapper;
     private final ConversationMessageMapper messageMapper;
     private final RagTraceRunMapper traceRunMapper;
+    private final KbRetrievalStatMapper statMapper;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
 
     @Override
     public DashboardOverviewVO loadOverview(String window) {
@@ -262,6 +273,55 @@ public class DashboardServiceImpl implements DashboardService {
                 .granularity(resolvedGranularity)
                 .series(series)
                 .build();
+    }
+
+    @Override
+    public DashboardKbHitRateVO loadKbHitRate(String window) {
+        WindowRange range = resolveWindowRange(window, Duration.ofDays(7));
+
+        QueryWrapper<KbRetrievalStatDO> wrapper = new QueryWrapper<>();
+        wrapper.select("kb_id", "count(*) as hits", "coalesce(sum(cited), 0) as citations")
+                .ge("create_time", range.start)
+                .lt("create_time", range.end)
+                .groupBy("kb_id")
+                .orderByDesc("hits")
+                .orderByDesc("citations");
+        List<Map<String, Object>> rows = statMapper.selectMaps(wrapper);
+
+        Map<String, String> nameById = resolveKbNames(rows);
+        List<DashboardKbHitRateItemVO> items = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String kbId = String.valueOf(row.get("kb_id"));
+            Long hits = toLongValue(row.get("hits"));
+            Long citations = toLongValue(row.get("citations"));
+            long hitCount = hits == null ? 0L : hits;
+            long citationCount = citations == null ? 0L : citations;
+            items.add(DashboardKbHitRateItemVO.builder()
+                    .kbId(kbId)
+                    .kbName(nameById.getOrDefault(kbId, DELETED_KB_NAME))
+                    .hitCount(hitCount)
+                    .citationCount(citationCount)
+                    .hitRate(hitCount == 0 ? 0.0 : round1(citationCount * 100.0 / hitCount))
+                    .build());
+        }
+        return DashboardKbHitRateVO.builder()
+                .window(range.windowLabel)
+                .items(items)
+                .build();
+    }
+
+    /**
+     * 命中行里的 kbId → 知识库名：@TableLogic 自动过滤已删除库，查不到的 kbId 由调用方走「已删除知识库」兜底名
+     */
+    private Map<String, String> resolveKbNames(List<Map<String, Object>> rows) {
+        Set<String> kbIds = rows.stream()
+                .map(row -> String.valueOf(row.get("kb_id")))
+                .collect(Collectors.toSet());
+        if (kbIds.isEmpty()) {
+            return Map.of();
+        }
+        return knowledgeBaseMapper.selectBatchIds(kbIds).stream()
+                .collect(Collectors.toMap(KnowledgeBaseDO::getId, KnowledgeBaseDO::getName));
     }
 
     private long countUsers(Date start, Date end) {

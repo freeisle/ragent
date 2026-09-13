@@ -47,6 +47,19 @@ export type DashboardTrends = {
   series: DashboardTrendSeries[];
 };
 
+export type DashboardKbHitRateItem = {
+  kbId: string;
+  kbName: string;
+  hitCount: number;
+  citationCount: number;
+  hitRate: number;
+};
+
+export type DashboardKbHitRate = {
+  window: string;
+  items: DashboardKbHitRateItem[];
+};
+
 export async function getDashboardOverview(window: string = "24h"): Promise<DashboardOverview> {
   return api.get<DashboardOverview, DashboardOverview>("/admin/dashboard/overview", {
     params: { window }
@@ -66,5 +79,11 @@ export async function getDashboardTrends(
 ): Promise<DashboardTrends> {
   return api.get<DashboardTrends, DashboardTrends>("/admin/dashboard/trends", {
     params: { metric, window, granularity }
+  });
+}
+
+export async function getDashboardKbHitRate(window: string = "7d"): Promise<DashboardKbHitRate> {
+  return api.get<DashboardKbHitRate, DashboardKbHitRate>("/admin/dashboard/kb-hit-rate", {
+    params: { window }
   });
 }

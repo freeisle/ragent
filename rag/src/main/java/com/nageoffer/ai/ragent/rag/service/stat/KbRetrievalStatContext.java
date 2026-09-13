@@ -15,20 +15,15 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.admin.service;
+package com.nageoffer.ai.ragent.rag.service.stat;
 
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardPerformanceVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
-
-public interface DashboardService {
-
-    DashboardOverviewVO loadOverview(String window);
-
-    DashboardPerformanceVO loadPerformance(String window);
-
-    DashboardTrendsVO loadTrends(String metric, String window, String granularity);
-
-    DashboardKbHitRateVO loadKbHitRate(String window);
+/**
+ * 知识库检索命中埋点所需的上下文标识
+ *
+ * @param conversationId     会话 ID
+ * @param taskId             一次回答的流式任务 ID（每提问唯一），埋点时刻助手消息尚未落库，以此作为每回答唯一键
+ * @param userId             用户 ID
+ * @param questionMessageId  提问消息 ID（loadMemory 落库后回填），排障用，可为空
+ */
+public record KbRetrievalStatContext(String conversationId, String taskId, String userId, String questionMessageId) {
 }

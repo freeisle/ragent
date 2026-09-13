@@ -15,20 +15,41 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.admin.service;
+package com.nageoffer.ai.ragent.admin.controller.vo;
 
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardPerformanceVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-public interface DashboardService {
+/**
+ * 知识库命中率条目
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DashboardKbHitRateItemVO {
 
-    DashboardOverviewVO loadOverview(String window);
+    private String kbId;
 
-    DashboardPerformanceVO loadPerformance(String window);
+    /**
+     * 知识库名；已删除知识库显示兜底名「已删除知识库」
+     */
+    private String kbName;
 
-    DashboardTrendsVO loadTrends(String metric, String window, String granularity);
+    /**
+     * 被检索命中次数（按提问去重）
+     */
+    private Long hitCount;
 
-    DashboardKbHitRateVO loadKbHitRate(String window);
+    /**
+     * 被引用次数
+     */
+    private Long citationCount;
+
+    /**
+     * 命中率（%）= 被引用次数 / 被检索命中次数 × 100，一位小数
+     */
+    private Double hitRate;
 }

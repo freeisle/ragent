@@ -31,11 +31,21 @@ import {
   type TrendSeries
 } from "@/components/admin/SimpleLineChart";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import {
+  getDashboardKbHitRate,
   getDashboardOverview,
   getDashboardPerformance,
   getDashboardTrends,
+  type DashboardKbHitRate,
   type DashboardOverview,
   type DashboardPerformance,
   type DashboardTrends
@@ -231,6 +241,7 @@ const useDashboardData = () => {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [performance, setPerformance] = useState<DashboardPerformance | null>(null);
   const [trends, setTrends] = useState<DashboardTrendBundle>(EMPTY_TRENDS);
+  const [kbHitRate, setKbHitRate] = useState<DashboardKbHitRate | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -244,13 +255,15 @@ const useDashboardData = () => {
     const granularity = windowValue === "24h" ? "hour" : "day";
 
     try {
-      const [overviewData, performanceData] = await Promise.all([
+      const [overviewData, performanceData, kbHitRateData] = await Promise.all([
         getDashboardOverview(windowValue),
-        getDashboardPerformance(windowValue)
+        getDashboardPerformance(windowValue),
+        getDashboardKbHitRate(windowValue)
       ]);
       if (requestIdRef.current !== requestId) return;
       setOverview(overviewData);
       setPerformance(performanceData);
+      setKbHitRate(kbHitRateData);
       setLastUpdated(Date.now());
 
       try {
@@ -297,6 +310,7 @@ const useDashboardData = () => {
     overview,
     performance,
     trends,
+    kbHitRate,
     refresh
   };
 };
@@ -1436,6 +1450,45 @@ const InsightSection = ({
 // Main Page
 // ============================================================================
 
+const KbHitRateCard = ({ data, loading }: { data: DashboardKbHitRate | null; loading: boolean }) => {
+  const items = data?.items ?? [];
+  return (
+      <DashCard>
+        <CardTitle>知识库命中率</CardTitle>
+        {loading ? (
+            <LoadingBlock className="h-24 w-full" />
+        ) : items.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-400">该时间窗内暂无知识库命中数据</p>
+        ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>知识库</TableHead>
+                  <TableHead className="text-right">命中次数</TableHead>
+                  <TableHead className="text-right">被引用次数</TableHead>
+                  <TableHead className="text-right">命中率</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                    <TableRow key={item.kbId}>
+                      <TableCell className="max-w-[320px] truncate font-medium text-slate-700">
+                        {item.kbName}
+                      </TableCell>
+                      <TableCell className="text-right">{formatNumber(item.hitCount)}</TableCell>
+                      <TableCell className="text-right">{formatNumber(item.citationCount)}</TableCell>
+                      <TableCell className="text-right font-medium text-slate-900">
+                        {item.hitRate.toFixed(1)}%
+                      </TableCell>
+                    </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+        )}
+      </DashCard>
+  );
+};
+
 export function DashboardPage() {
   const {
     timeWindow,
@@ -1446,6 +1499,7 @@ export function DashboardPage() {
     overview,
     performance,
     trends,
+    kbHitRate,
     refresh
   } = useDashboardData();
 
@@ -1476,6 +1530,7 @@ export function DashboardPage() {
                 className="h-[300px]"
             />
             <TrendSection trends={trends} timeWindow={timeWindow} loading={loading} />
+            <KbHitRateCard data={kbHitRate} loading={loading} />
           </div>
 
           <aside className="space-y-5 xl:sticky xl:top-4 xl:self-start">

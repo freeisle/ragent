@@ -15,20 +15,31 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.admin.service;
+package com.nageoffer.ai.ragent.admin.controller.vo;
 
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardKbHitRateVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardOverviewVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardPerformanceVO;
-import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
-public interface DashboardService {
+import java.util.List;
 
-    DashboardOverviewVO loadOverview(String window);
+/**
+ * 知识库命中率统计
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DashboardKbHitRateVO {
 
-    DashboardPerformanceVO loadPerformance(String window);
+    /**
+     * 窗口标签，如 7d
+     */
+    private String window;
 
-    DashboardTrendsVO loadTrends(String metric, String window, String granularity);
-
-    DashboardKbHitRateVO loadKbHitRate(String window);
+    /**
+     * 按命中次数降序
+     */
+    private List<DashboardKbHitRateItemVO> items;
 }
