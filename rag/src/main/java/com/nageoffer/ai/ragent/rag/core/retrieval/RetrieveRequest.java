@@ -31,6 +31,7 @@ import java.util.Map;
  * - 支持基础 query + topK
  * - 支持指定 Milvus collectionName
  * - 支持简单的 metadata 等值过滤（扩展用）
+ * - 支持 chunk ID 时间下界过滤（最近 N 天入库）
  */
 @Data
 @NoArgsConstructor
@@ -72,6 +73,17 @@ public class RetrieveRequest {
      * {"biz_type": "ATTENDANCE", "env": "TEST"}
      */
     private Map<String, Object> metadataFilters;
+
+    /**
+     * chunk ID 下界（含），为空表示不限时间
+     * <p>
+     * 取值为 chunk 的雪花 ID 十进制串（定宽 19 位，见 {@code ChunkAssembler.minChunkIdAt}），
+     * 故两个后端都按字符串序比较即等价于按数值序比较；由调用方按「最近 N 天」解析好后传入，
+     * 后端只负责渲染：PG 拼 {@code AND id >= ?}（走主键 btree），Milvus 拼 {@code id >= "..."}
+     * <p>
+     * 语义是 chunk 的诞生时间，不等于向量行的写入时间：重新向量化沿用原 ID，老块的新向量仍会被挡在窗外
+     */
+    private String minChunkId;
 
     /**
      * 新的多 Collection 参数优先，旧的单 Collection 参数用于兼容已有调用方

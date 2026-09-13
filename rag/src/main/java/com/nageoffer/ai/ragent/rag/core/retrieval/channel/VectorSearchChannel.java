@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.rag.core.retrieval.channel;
 
+import com.nageoffer.ai.ragent.core.chunk.model.ChunkAssembler;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
 import com.nageoffer.ai.ragent.rag.core.retrieval.RetrievalBudget;
@@ -44,6 +45,8 @@ import java.util.concurrent.Executor;
 @Slf4j
 @Component
 public class VectorSearchChannel implements SearchChannel {
+
+    private static final long MILLIS_PER_DAY = 86_400_000L;
 
     private final SearchChannelProperties properties;
     private final VectorRetrieverService retrieverService;
@@ -76,13 +79,14 @@ public class VectorSearchChannel implements SearchChannel {
 
         try {
             RetrievalScope scope = context.getRetrievalScope();
+            String minChunkId = recentChunkIdBound(); // 一次请求算一次，主路与补充路共用同一个窗
             List<RetrievedChunk> chunks;
             Map<String, Object> metadata;
             if (scope.directed()) {
-                chunks = retrieveDirected(context, scope);
+                chunks = retrieveDirected(context, scope, minChunkId);
                 metadata = Map.of("scope", "directed", "topScore", scope.topScore());
             } else {
-                chunks = retrieveGlobal(context, scope);
+                chunks = retrieveGlobal(context, scope, minChunkId);
                 metadata = Map.of("scope", "global", "topScore", scope.topScore());
             }
 
@@ -110,7 +114,7 @@ public class VectorSearchChannel implements SearchChannel {
      * 定向作用域：对命中库取主路候选，同时并行补一路未命中库
      * 定向与全局同一取数原语、只差库集合；两路共用一次 embedding、同池并发，补充路不增加通道延迟
      */
-    private List<RetrievedChunk> retrieveDirected(SearchContext context, RetrievalScope scope) {
+    private List<RetrievedChunk> retrieveDirected(SearchContext context, RetrievalScope scope, String minChunkId) {
         String question = context.getMainQuestion();
         float[] queryVector = retrieverService.embedAndNormalize(question);
         ScopeQuota quota = ScopeQuota.split(scope, resolveDirectedBudget(scope, context.getBudget()), supplementRatio());
@@ -119,7 +123,7 @@ public class VectorSearchChannel implements SearchChannel {
         // 通道级 catch 丢掉——兜底路把主路带走，鲁棒性方向正好反了
         CompletableFuture<List<RetrievedChunk>> supplementTask = quota.supplement() > 0
                 ? CompletableFuture.<List<RetrievedChunk>>supplyAsync(
-                () -> retrieveOver(question, queryVector, scope.supplementCollections(), quota.supplement()),
+                () -> retrieveOver(question, queryVector, scope.supplementCollections(), quota.supplement(), minChunkId),
                 retrievalExecutor)
                 .exceptionally(e -> {
                     log.warn("向量补充路检索失败，仅丢弃补充证据: {}", e.getMessage());
@@ -127,11 +131,11 @@ public class VectorSearchChannel implements SearchChannel {
                 })
                 : CompletableFuture.completedFuture(List.of());
 
-        List<RetrievedChunk> directed = retrieveOver(question, queryVector, scope.targetCollections(), quota.primary());
+        List<RetrievedChunk> directed = retrieveOver(question, queryVector, scope.targetCollections(), quota.primary(), minChunkId);
         List<RetrievedChunk> supplement = supplementTask.join();
 
-        log.info("向量检索完成（定向），意图 top1={}，命中 {} 库 {} 条（最高余弦 {}），补充 {} 库 {} 条（最高余弦 {}）",
-                scope.topScore(), scope.targetCollections().size(), directed.size(), ChunkRanking.topScoreOf(directed),
+        log.info("向量检索完成（定向），意图 top1={}，时间窗 {} 天（0=不限），命中 {} 库 {} 条（最高余弦 {}），补充 {} 库 {} 条（最高余弦 {}）",
+                scope.topScore(), recentDays(), scope.targetCollections().size(), directed.size(), ChunkRanking.topScoreOf(directed),
                 scope.supplementCollections().size(), supplement.size(), ChunkRanking.topScoreOf(supplement));
         return ChunkRanking.mergeByScore(directed, supplement);
     }
@@ -158,17 +162,17 @@ public class VectorSearchChannel implements SearchChannel {
      * 全局作用域：跨全部有效库检索
      * 取数深度与其他通道同源、只受 recallBudget 管——候选池上限是 RRF 之后的闸门而非取数目标
      */
-    private List<RetrievedChunk> retrieveGlobal(SearchContext context, RetrievalScope scope) {
+    private List<RetrievedChunk> retrieveGlobal(SearchContext context, RetrievalScope scope, String minChunkId) {
         if (scope.targetCollections().isEmpty()) {
             log.warn("未找到任何 KB collection，跳过全局检索");
             return List.of();
         }
         String question = context.getMainQuestion();
         List<RetrievedChunk> chunks = retrieveOver(question, retrieverService.embedAndNormalize(question),
-                scope.targetCollections(), context.getBudget().recallBudget());
+                scope.targetCollections(), context.getBudget().recallBudget(), minChunkId);
 
-        log.info("向量检索完成（全局），意图 top1={}，{} 库 {} 条（最高余弦 {}）",
-                scope.topScore(), scope.targetCollections().size(), chunks.size(), ChunkRanking.topScoreOf(chunks));
+        log.info("向量检索完成（全局），意图 top1={}，时间窗 {} 天（0=不限），{} 库 {} 条（最高余弦 {}）",
+                scope.topScore(), recentDays(), scope.targetCollections().size(), chunks.size(), ChunkRanking.topScoreOf(chunks));
         return chunks;
     }
 
@@ -182,7 +186,7 @@ public class VectorSearchChannel implements SearchChannel {
      * 排序在截断之前，且后端返回序不能直接信：PG 开了 {@code hnsw.iterative_scan=relaxed_order}，
      * pgvector 在该模式下允许轻微乱序且规划器不补 Sort 节点，先排后截才是取全局最优的前 budget 条
      */
-    private List<RetrievedChunk> retrieveOver(String question, float[] queryVector, List<String> collections, int budget) {
+    private List<RetrievedChunk> retrieveOver(String question, float[] queryVector, List<String> collections, int budget, String minChunkId) {
         if (collections.isEmpty()) {
             return List.of();
         }
@@ -191,9 +195,30 @@ public class VectorSearchChannel implements SearchChannel {
                 .collectionNames(collections)
                 .query(question)
                 .topK(budget)
+                .minChunkId(minChunkId)
                 .build())
-                : globalRetriever.executeParallelRetrieval(question, collections, budget, queryVector);
+                : globalRetriever.executeParallelRetrieval(question, collections, budget, queryVector, minChunkId);
         return ScopeQuota.cap(ChunkRanking.sortedByScore(chunks), budget);
+    }
+
+    /**
+     * 时间窗下界：只召回最近 recent-days 天内新建的 chunk；0（默认）不限，返回 null 表示不带过滤
+     * <p>
+     * 在通道入口算一次、主路与补充路共用：两路各算各的下界，跨毫秒时同一批证据会被两个不同的窗切一刀，
+     * 补充路候选与主路不再可比
+     */
+    private String recentChunkIdBound() {
+        int recentDays = recentDays();
+        if (recentDays <= 0) {
+            return null;
+        }
+        // 必须走 long：int 的 recentDays * 86400000 在 25 天时就溢出，时间窗会翻到过去
+        long cutoffMillis = System.currentTimeMillis() - recentDays * MILLIS_PER_DAY;
+        return ChunkAssembler.minChunkIdAt(cutoffMillis);
+    }
+
+    private int recentDays() {
+        return properties.getChannels().getVector().getRecentDays();
     }
 
     private double supplementRatio() {

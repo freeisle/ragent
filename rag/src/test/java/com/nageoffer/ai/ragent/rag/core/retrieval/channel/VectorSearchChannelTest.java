@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.rag.core.retrieval.channel;
 
+import com.nageoffer.ai.ragent.core.chunk.model.ChunkAssembler;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
 import com.nageoffer.ai.ragent.rag.core.intent.IntentNode;
@@ -33,6 +34,8 @@ import java.util.List;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -287,6 +290,58 @@ class VectorSearchChannelTest {
 
         assertEquals(List.of("b", "c", "a"), chunks.stream().map(RetrievedChunk::getId).toList(),
                 "下游 RRF 按列表位次取分，出口乱序等于名次基准失真");
+    }
+
+    @Test
+    @DisplayName("recentDays=0（默认）时不带任何时间下界")
+    void zeroRecentDaysPassesNoTimeBound() {
+        search(directedScope(), PRODUCTION_BUDGET);
+
+        captureRequests().forEach(request -> assertNull(request.getMinChunkId(), "默认不限时间，请求不得携带 chunk ID 下界"));
+    }
+
+    @Test
+    @DisplayName("recentDays>0 时主路与补充路携带同一个时间下界")
+    void recentDaysBoundsDirectedAndSupplementWithSameWindow() {
+        properties.getChannels().getVector().setRecentDays(7);
+
+        search(directedScope(), PRODUCTION_BUDGET);
+
+        List<RetrieveRequest> requests = captureRequests();
+        assertEquals(2, requests.size());
+        List<String> bounds = requests.stream().map(RetrieveRequest::getMinChunkId).toList();
+        bounds.forEach(bound -> assertNotNull(bound));
+        assertEquals(bounds.get(0), bounds.get(1), "主路与补充路必须共用通道入口算出的同一个窗，两路各算会在毫秒边界切出两个窗");
+
+        // 通道的 cutoff=通道now-7d 必落在 [断言now-8d, 断言now] 内，而 minChunkIdAt 单调，故夹逼断言抗时钟抖动
+        long actual = Long.parseLong(bounds.get(0));
+        long lower = Long.parseLong(ChunkAssembler.minChunkIdAt(System.currentTimeMillis() - 8 * 86_400_000L));
+        long upper = Long.parseLong(ChunkAssembler.minChunkIdAt(System.currentTimeMillis()));
+        assertTrue(actual >= lower && actual <= upper, "下界应落在最近 7 天窗口内");
+    }
+
+    @Test
+    @DisplayName("全局作用域同样携带时间下界")
+    void globalScopeCarriesTimeBound() {
+        properties.getChannels().getVector().setRecentDays(7);
+
+        search(RetrievalScope.global(0.3, List.of("kb-finance", "kb-hr")), PRODUCTION_BUDGET);
+
+        List<RetrieveRequest> requests = captureRequests();
+        assertEquals(1, requests.size());
+        assertNotNull(requests.get(0).getMinChunkId(), "全局路与定向路同一取数原语，时间窗不该在作用域间失效");
+    }
+
+    @Test
+    @DisplayName("后端不支持跨库单查时 fan-out 兜底路同样携带时间下界")
+    void fanOutFallbackCarriesTimeBound() {
+        properties.getChannels().getVector().setRecentDays(7);
+        when(retrieverService.supportsGlobalRetrieval()).thenReturn(false);
+
+        search(directedScope(), PRODUCTION_BUDGET);
+
+        assertTrue(captureRequests().stream().allMatch(request -> request.getMinChunkId() != null),
+                "fan-out 兜底与跨库单查必须同口径，否则换个后端就换一套召回");
     }
 
     /**

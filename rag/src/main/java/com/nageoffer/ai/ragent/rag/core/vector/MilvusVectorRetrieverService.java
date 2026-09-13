@@ -57,7 +57,7 @@ public class MilvusVectorRetrieverService implements VectorRetrieverService {
     @Override
     public List<RetrievedChunk> retrieveByVector(float[] vector, RetrieveRequest retrieveParam) {
         // 单个或多个逻辑库都在共享物理 Collection 中一次过滤，topK 是整个过滤范围的总预算
-        String filter = buildCollectionFilter(retrieveParam.getEffectiveCollectionNames());
+        String filter = buildFilter(retrieveParam.getEffectiveCollectionNames(), retrieveParam.getMinChunkId());
         return searchShared(vector, filter, retrieveParam.getTopK());
     }
 
@@ -71,7 +71,7 @@ public class MilvusVectorRetrieverService implements VectorRetrieverService {
         return true;
     }
 
-    private String buildCollectionFilter(List<String> collectionNames) {
+    private static String buildCollectionFilter(List<String> collectionNames) {
         if (collectionNames == null || collectionNames.isEmpty()) {
             return null;
         }
@@ -79,13 +79,32 @@ public class MilvusVectorRetrieverService implements VectorRetrieverService {
             return "collection_name == \"" + escapeFilterValue(collectionNames.get(0)) + "\"";
         }
         String inList = collectionNames.stream()
-                .map(this::escapeFilterValue)
+                .map(MilvusVectorRetrieverService::escapeFilterValue)
                 .map(value -> "\"" + value + "\"")
                 .collect(Collectors.joining(", "));
         return "collection_name in [" + inList + "]";
     }
 
-    private String escapeFilterValue(String value) {
+    /**
+     * 标量过滤表达式：库范围 + 时间下界，两者各自可为空，都为空时返回 null（不过滤）
+     * <p>
+     * id 是 VarChar 主键、取值是定宽 19 位的雪花十进制串（见 {@code RetrieveRequest#minChunkId}），
+     * 与 collection_name 一样可做字典序范围比较；表达式是纯字符串拼装，
+     * 抽成静态包级可见以便不起 Milvus 就能单测
+     * <p>
+     * 库范围为空而时间下界非空时只按 id 过滤（不能退化为全共享库扫描）；
+     * 反之亦然，两者同为空时不过滤
+     */
+    static String buildFilter(List<String> collectionNames, String minChunkId) {
+        String collectionFilter = buildCollectionFilter(collectionNames);
+        String idFilter = StrUtil.isBlank(minChunkId) ? null : "id >= \"" + escapeFilterValue(minChunkId) + "\"";
+        if (collectionFilter == null) {
+            return idFilter;
+        }
+        return idFilter == null ? collectionFilter : collectionFilter + " && " + idFilter;
+    }
+
+    private static String escapeFilterValue(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 

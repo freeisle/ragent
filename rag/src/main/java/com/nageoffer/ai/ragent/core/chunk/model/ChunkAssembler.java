@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.core.chunk.model;
 
+import cn.hutool.core.lang.Snowflake;
 import cn.hutool.core.util.IdUtil;
 import org.springframework.util.StringUtils;
 
@@ -34,6 +35,9 @@ public final class ChunkAssembler {
     private static final String CONTEXT_SEPARATOR = "\n";
 
     private static final String OUTLINE_SEPARATOR = " / ";
+
+    /** 时间→ID 换算专用：只读 twepoch，不参与发号，故可共享；dc/worker 传 0 是因为全局下界用不到它们 */
+    private static final Snowflake ID_SCHEME = new Snowflake(0, 0);
 
     private ChunkAssembler() {
     }
@@ -84,6 +88,26 @@ public final class ChunkAssembler {
      */
     public static String nextChunkId() {
         return IdUtil.getSnowflakeNextIdStr();
+    }
+
+    /**
+     * 时间 → 块 ID 下界（含）：铸造时刻不早于 {@code epochMillis} 的块 ID 全都 >= 返回值
+     * <p>
+     * 用 Hutool 的 {@code getIdScopeByTimestamp}（两参重载 = isInclude）而不是自己移位：雪花布局
+     * （twepoch 1288834974657 + 时间戳左移 22 位）只该在这一个文件里出现，换实现时正反两个方向一起改
+     * <p>
+     * 该重载返回的是「全局最小 ID」——低位的数据中心/机器/序列全是 0，与发号节点无关；
+     * 三参重载 isInclude=false 会把本实例的 dc/worker 位掺进来，那会漏掉别的节点写的块，不要用
+     * <p>
+     * 前置假设（字典序 == 数值序，两处过滤都依赖它）：ID 是全系统统一的雪花十进制串，2018-05-25 之后
+     * 铸造的 ID 恒为 19 位（10^18 的门槛），定宽数字串的字典序与数值序一致；若库里混入更早的 18 位 ID
+     * 或别的 ID 方案，它们会因字典序偏大而被判为「新的」——过滤失效但只会多召回，不会误删
+     */
+    public static String minChunkIdAt(long epochMillis) {
+        long minId = ID_SCHEME.getIdScopeByTimestamp(epochMillis, epochMillis).getKey();
+        // 时间早于 twepoch（N 大到离谱）时移位结果为负，"-xxx" 的首字符比任何数字都小、会变成
+        // 「全不过滤」之外的另一种失控；钳到 "0" 让语义退化为不限，是唯一安全的兜底
+        return Long.toString(Math.max(0L, minId));
     }
 
     /**

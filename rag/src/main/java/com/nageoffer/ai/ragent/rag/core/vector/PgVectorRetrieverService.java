@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.rag.core.vector;
 
+import cn.hutool.core.util.StrUtil;
 import com.nageoffer.ai.ragent.rag.core.retrieval.RetrieveRequest;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.infra.embedding.EmbeddingService;
@@ -50,7 +51,7 @@ public class PgVectorRetrieverService implements VectorRetrieverService {
             return List.of();
         }
         // 单个或多个逻辑库都通过一条 SQL 过滤，LIMIT 是整个范围的总 TopK
-        return queryByCollections(vector, collectionNames, request.getTopK());
+        return queryByCollections(vector, collectionNames, request.getTopK(), request.getMinChunkId());
     }
 
     @Override
@@ -67,8 +68,10 @@ public class PgVectorRetrieverService implements VectorRetrieverService {
      * 在指定 collection 范围内执行一次向量相似度检索
      * <p>
      * 单库与全局共用此方法：单库传单元素列表，全局传多元素列表
+     *
+     * @param minChunkId chunk ID 下界（含），为空表示不限时间
      */
-    private List<RetrievedChunk> queryByCollections(float[] vector, List<String> collectionNames, int limit) {
+    private List<RetrievedChunk> queryByCollections(float[] vector, List<String> collectionNames, int limit, String minChunkId) {
         // 提升召回率；迭代扫描保证过滤后仍能填满 LIMIT，消除过滤向量检索的召回悬崖（pgvector >= 0.8）
         // noinspection SqlDialectInspection,SqlNoDataSourceInspection
         jdbcTemplate.execute("SET hnsw.ef_search = 200");
@@ -78,16 +81,25 @@ public class PgVectorRetrieverService implements VectorRetrieverService {
         String vectorLiteral = toVectorLiteral(vector);
         String placeholders = collectionNames.stream().map(c -> "?").collect(java.util.stream.Collectors.joining(", "));
 
-        Object[] args = new Object[collectionNames.size() + 3];
+        // 时间下界按字符串序比较即数值序（id 是定宽 19 位的雪花十进制串，见 RetrieveRequest#minChunkId），
+        // 谓词吃 t_knowledge_vector_pkey 的 btree，不需要新索引；过滤只缩减候选集，召回悬崖由 iterative_scan 兜住
+        boolean timeFiltered = StrUtil.isNotBlank(minChunkId);
+        String timePredicate = timeFiltered ? " AND id >= ?" : "";
+
+        Object[] args = new Object[collectionNames.size() + (timeFiltered ? 4 : 3)];
         args[0] = vectorLiteral;
         for (int i = 0; i < collectionNames.size(); i++) {
             args[i + 1] = collectionNames.get(i);
         }
-        args[collectionNames.size() + 1] = vectorLiteral;
-        args[collectionNames.size() + 2] = limit;
+        int index = collectionNames.size() + 1;
+        if (timeFiltered) {
+            args[index++] = minChunkId; // 占位符紧跟 IN 列表，必须排在 ORDER BY 的向量参数之前
+        }
+        args[index++] = vectorLiteral;
+        args[index] = limit;
 
         // noinspection SqlDialectInspection,SqlNoDataSourceInspection
-        return jdbcTemplate.query("SELECT id, content, collection_name, 1 - (embedding <=> ?::vector) AS score FROM t_knowledge_vector WHERE collection_name IN (" + placeholders + ") ORDER BY embedding <=> ?::vector LIMIT ?",
+        return jdbcTemplate.query("SELECT id, content, collection_name, 1 - (embedding <=> ?::vector) AS score FROM t_knowledge_vector WHERE collection_name IN (" + placeholders + ")" + timePredicate + " ORDER BY embedding <=> ?::vector LIMIT ?",
                 (rs, rowNum) -> RetrievedChunk.builder()
                         .id(rs.getString("id"))
                         .text(rs.getString("content"))

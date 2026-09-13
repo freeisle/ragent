@@ -51,7 +51,7 @@ public class CollectionParallelRetriever {
     public List<RetrievedChunk> executeParallelRetrieval(String question,
                                                          List<String> collections,
                                                          int topK) {
-        return executeParallelRetrieval(question, collections, topK, retrieverService.embedAndNormalize(question));
+        return executeParallelRetrieval(question, collections, topK, retrieverService.embedAndNormalize(question), null);
     }
 
     /**
@@ -59,17 +59,20 @@ public class CollectionParallelRetriever {
      * 供同一次请求内还有其他向量取数路（如向量通道的补充路）时共用一次 embedding
      *
      * @param queryVector 已归一化的查询向量
+     * @param minChunkId  chunk ID 下界（含），为空不限；逐库 fan-out 与跨库单查必须同口径，
+     *                    否则同一份配置下换个后端就换一套召回
      */
     public List<RetrievedChunk> executeParallelRetrieval(String question,
                                                          List<String> collections,
                                                          int topK,
-                                                         float[] queryVector) {
+                                                         float[] queryVector,
+                                                         String minChunkId) {
         record RetrievalFuture(String collection, CompletableFuture<List<RetrievedChunk>> future) {
         }
 
         List<RetrievalFuture> futures = collections.stream()
                 .map(collection -> new RetrievalFuture(collection, CompletableFuture.supplyAsync(
-                        () -> retrieveOne(question, collection, queryVector, topK),
+                        () -> retrieveOne(question, collection, queryVector, topK, minChunkId),
                         executor
                 )))
                 .toList();
@@ -101,7 +104,7 @@ public class CollectionParallelRetriever {
     /**
      * 单库取数，失败返回空列表兑现「单库失败只损失自己」
      */
-    private List<RetrievedChunk> retrieveOne(String question, String collectionName, float[] queryVector, int topK) {
+    private List<RetrievedChunk> retrieveOne(String question, String collectionName, float[] queryVector, int topK, String minChunkId) {
         try {
             return retrieverService.retrieveByVector(
                     queryVector,
@@ -109,6 +112,7 @@ public class CollectionParallelRetriever {
                             .collectionName(collectionName)
                             .query(question)
                             .topK(topK)
+                            .minChunkId(minChunkId)
                             .build()
             );
         } catch (Exception e) {

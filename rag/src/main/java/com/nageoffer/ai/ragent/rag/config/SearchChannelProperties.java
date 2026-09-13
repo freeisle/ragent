@@ -125,6 +125,13 @@ public class SearchChannelProperties implements InitializingBean {
                             + "取到 1 等于把高置信命中库的名额清零，与「定向优先、补充兜底」相反；关闭补充路请填 0",
                     supplementRatio));
         }
+        int recentDays = channels.getVector().getRecentDays();
+        if (recentDays < 0) {
+            throw new IllegalStateException(String.format(
+                    "rag.search.channels.vector.recent-days(%d) 不能为负数：该值是天数、0=不限，"
+                            + "负数会把时间窗推到未来、让向量通道恒返回空，且表现与「库里没料」无从分辨",
+                    recentDays));
+        }
         // 精排分按 0~1 输出，下限高于 1 则全部证据被丢，表现与「库里没料」一致，线上无从分辨
         double minRerankScore = evidence.getMinRerankScore();
         if (Double.isNaN(minRerankScore) || minRerankScore > 1) {
@@ -205,6 +212,16 @@ public class SearchChannelProperties implements InitializingBean {
          * 一条向量通道一个总开关；关闭即全站无向量召回
          */
         private boolean enabled = true;
+
+        /**
+         * 时间窗：只召回最近 N 天内新建的 chunk，0（默认）不限
+         * <p>
+         * 判定基准是 chunk ID 的铸造时刻（雪花 ID 高位时间戳），不是向量行的最后写入时刻：
+         * 已入库块重新向量化沿用原 ID（见 {@code ChunkAssembler.restore}），其行会被本过滤排除
+         * <p>
+         * 负值不可用（启动校验）：时间窗会落到未来、向量通道恒返回空，且表现与「库里没料」无从分辨
+         */
+        private int recentDays = 0;
     }
 
     @Data

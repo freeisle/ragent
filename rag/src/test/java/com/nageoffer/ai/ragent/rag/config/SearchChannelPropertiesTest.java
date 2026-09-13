@@ -119,4 +119,21 @@ class SearchChannelPropertiesTest {
         props.getEvidence().setMinRerankScore(0);
         assertDoesNotThrow(props::afterPropertiesSet, "置零是关闭闸门的回退路径，不应拦截");
     }
+
+    @Test
+    @DisplayName("recentDays 为负会把时间窗推到未来、向量通道恒空，启动即抛")
+    void negativeRecentDaysThrows() {
+        SearchChannelProperties props = new SearchChannelProperties();
+        props.getChannels().getVector().setRecentDays(-1);
+        assertThrows(IllegalStateException.class, props::afterPropertiesSet,
+                "负数天数=时间窗在未来，通道恒返回空且与「库里没料」无从分辨，必须启动拦截");
+    }
+
+    @Test
+    @DisplayName("recentDays 默认 0（不限）通过校验")
+    void defaultRecentDaysPassesValidation() {
+        SearchChannelProperties props = new SearchChannelProperties();
+        assertEquals(0, props.getChannels().getVector().getRecentDays());
+        assertDoesNotThrow(props::afterPropertiesSet);
+    }
 }
