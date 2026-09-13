@@ -22,6 +22,7 @@ import com.nageoffer.ai.ragent.core.chunk.model.Chunk;
 import com.nageoffer.ai.ragent.core.chunk.model.EmbeddedChunk;
 import com.nageoffer.ai.ragent.core.ingest.embed.ChunkEmbeddingService;
 import com.nageoffer.ai.ragent.core.ingest.sink.ChunkIndexWriter;
+import com.nageoffer.ai.ragent.core.ingest.summary.DocumentSummarizer;
 import com.nageoffer.ai.ragent.core.parser.DocumentParser;
 import com.nageoffer.ai.ragent.core.parser.mime.MimeTypeDetector;
 import com.nageoffer.ai.ragent.core.parser.model.Block;
@@ -36,6 +37,8 @@ import org.springframework.util.StringUtils;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * 摄取内核默认实现：固定五步骨架，全文唯一一条摄取执行序列
@@ -61,6 +64,7 @@ public class DefaultIngestionKernel implements IngestionKernel {
     private final ChunkingService chunkingService;
     private final ChunkEmbeddingService chunkEmbeddingService;
     private final ChunkIndexWriter chunkIndexWriter;
+    private final DocumentSummarizer documentSummarizer;
 
     @Override
     public IngestionOutcome run(DocumentRef doc,
@@ -87,14 +91,21 @@ public class DefaultIngestionKernel implements IngestionKernel {
         log.info("摄取-解析完成 docId={} mime={} 档位={} 解析器={} blocks={}",
                 doc.docId(), mimeType, effectiveSpec.parseProfile().getCode(), parser.getParserType(), blocks.size());
 
-        // ③ chunk：Block 类型 → chunker + 预算
+        // ③ chunk：文档摘要增强 + Block 类型 → chunker + 预算（摘要 LLM 调用并入本阶段计时）
         long chunkStart = System.currentTimeMillis();
+        Optional<Chunk> summary = documentSummarizer.summarize(blocks, doc.filename());
         List<Chunk> chunks = chunkingService.chunk(blocks, effectiveSpec.budget());
-        long chunkMillis = System.currentTimeMillis() - chunkStart;
 
         if (chunks.isEmpty()) {
             throw new ClientException("分块结果为空：docId=" + doc.docId() + ", mime=" + mimeType);
         }
+
+        // 摘要块占 index 0，普通块整体后移；摘要缺失时序号原样从 0 起
+        if (summary.isPresent()) {
+            chunks = Stream.concat(Stream.of(summary.get()),
+                    chunks.stream().map(c -> c.withIndex(c.index() + 1))).toList();
+        }
+        long chunkMillis = System.currentTimeMillis() - chunkStart;
 
         // ④ embed：模型与维度都来自落点，此处校验维度
         long embedStart = System.currentTimeMillis();

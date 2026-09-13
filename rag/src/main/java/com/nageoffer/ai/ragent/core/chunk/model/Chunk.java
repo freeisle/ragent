@@ -57,4 +57,11 @@ public record Chunk(
     public Chunk withMetadata(ChunkMetadata newMetadata) {
         return new Chunk(chunkId, index, content, embeddingText, newMetadata);
     }
+
+    /**
+     * 复制并替换序号：摘要块前置时普通块整体后移用
+     */
+    public Chunk withIndex(int newIndex) {
+        return new Chunk(chunkId, newIndex, content, embeddingText, metadata);
+    }
 }
