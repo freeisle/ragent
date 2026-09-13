@@ -17,7 +17,7 @@ spring:
     type: com.zaxxer.hikari.HikariDataSource
     username: postgres
     password: postgres
-    url: jdbc:postgresql://127.0.0.1:5432/ragent?client_encoding=UTF8
+    url: jdbc:postgresql://192.168.101.68:5432/ragent?client_encoding=UTF8
     hikari:
       connection-timeout: 5000
       idle-timeout: 600000
@@ -28,7 +28,7 @@ spring:
 
   data:
     redis:
-      host: 127.0.0.1
+      host: 192.168.101.68
       port: 6379
       password: 123456
 
@@ -42,8 +42,10 @@ ragent:
 # Agent 执行架构（ragent.engine.type=agent 时生效）；单模型无 fallback，供应商可用性由 provider 侧保障
 agent:
   chat:
-    provider: siliconflow   # 引用 ai.providers 下的供应商，取其 url / api-key / endpoints.chat
-    model: deepseek-ai/DeepSeek-V4-Pro    # 直接传给 OpenAI 兼容端点的模型名
+#    provider: siliconflow   # 引用 ai.providers 下的供应商，取其 url / api-key / endpoints.chat
+#    model: deepseek-ai/DeepSeek-V4-Pro    # 直接传给 OpenAI 兼容端点的模型名
+     provider: bailian                          # 改成你有有效 Key 的供应商
+     model: qwen3.7-max               # 对应供应商下可用的模型名
   max-iters: 10         # ReAct 循环上限，超出后熔断收尾
   max-retries: 2        # 单次模型调用失败重试次数
   sse-timeout-ms: 900000
@@ -59,7 +61,7 @@ rag:
     kb-bucket: ragent-sources        # 全局知识库桶（私有），所有知识库文档按 collectionName 目录隔离；OSS 桶名全局唯一，生产需按部署覆盖
     asset-bucket: ragent-assets # 多模态资产桶（公共读），PDF 抽出的图片等供浏览器匿名直连预览
     s3:
-      endpoint: http://localhost:9000
+      endpoint: http://192.168.101.68:9000
       access-key: rustfsadmin
       secret-key: rustfsadmin
       region: us-east-1
@@ -78,7 +80,7 @@ rag:
   keyword:
     type: none  # 可选 none / es
     es:
-      uris: http://127.0.0.1:9200
+      uris: http://192.168.101.68:9200
       index: rag_keyword_store  # 全库共享索引，按 collection_name 字段区分知识库
       analyzer: ik_max_word
       search-analyzer: ik_smart
@@ -153,6 +155,7 @@ rag:
       timeout-ms: 15000     # 单通道查询超时上限（毫秒）
       vector:
         enabled: true       # 向量通道总开关
+        recent-days: 7      # 只召回最近 N 天内新建的 chunk（按 chunk 雪花 ID 时间下界过滤，定向/补充/全局三路同用）；0=不限
       keyword:
         enabled: false      # 检索范围读引擎解析好的作用域，与向量通道同源
       graph:
@@ -200,7 +203,7 @@ ai:
         embedding: /v1/embeddings
     bailian:
       url: https://dashscope.aliyuncs.com
-      api-key: ${BAILIAN_API_KEY:}
+      api-key: ${DASHSCOPE_API_KEY:}
       endpoints:
         chat: /compatible-mode/v1/chat/completions
         rerank: /api/v1/services/rerank/text-rerank/text-rerank
@@ -325,7 +328,7 @@ sa-token:
   is-print: false
 
 rocketmq:
-  name-server: 127.0.0.1:9876
+  name-server: 192.168.101.68:9876
   producer:
     group: ragent-producer${unique-name:}_pg
     send-message-timeout: 2000

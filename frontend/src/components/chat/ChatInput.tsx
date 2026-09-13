@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Brain, Lightbulb, Send, Square } from "lucide-react";
 
+import { AnswerStyleSelector } from "@/components/common/AnswerStyleSelector";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chatStore";
@@ -16,6 +17,8 @@ export function ChatInput() {
     cancelGeneration,
     deepThinkingEnabled,
     setDeepThinkingEnabled,
+    answerStyle,
+    setAnswerStyle,
     inputFocusKey
   } = useChatStore();
 
@@ -99,27 +102,30 @@ export function ChatInput() {
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-[10px] bg-gradient-to-b from-white/0 via-white/40 to-white/90" />
         </div>
         <div className="relative mt-2 flex items-center">
-          <button
-            type="button"
-            onClick={() => setDeepThinkingEnabled(!deepThinkingEnabled)}
-            disabled={isStreaming}
-            aria-pressed={deepThinkingEnabled}
-            className={cn(
-              "absolute left-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
-              deepThinkingEnabled
-                ? "border-[#BFDBFE] bg-[#DBEAFE] text-[#2563EB]"
-                : "border-transparent bg-[#F5F5F5] text-[#999999] hover:bg-[#EEEEEE]",
-              isStreaming && "cursor-not-allowed opacity-60"
-            )}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Brain className={cn("h-3.5 w-3.5", deepThinkingEnabled && "text-[#3B82F6]")} />
-              深度思考
-              {deepThinkingEnabled ? (
-                <span className="h-2 w-2 rounded-full bg-[#3B82F6] animate-pulse" />
-              ) : null}
-            </span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDeepThinkingEnabled(!deepThinkingEnabled)}
+              disabled={isStreaming}
+              aria-pressed={deepThinkingEnabled}
+              className={cn(
+                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                deepThinkingEnabled
+                  ? "border-[#BFDBFE] bg-[#DBEAFE] text-[#2563EB]"
+                  : "border-transparent bg-[#F5F5F5] text-[#999999] hover:bg-[#EEEEEE]",
+                isStreaming && "cursor-not-allowed opacity-60"
+              )}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Brain className={cn("h-3.5 w-3.5", deepThinkingEnabled && "text-[#3B82F6]")} />
+                深度思考
+                {deepThinkingEnabled ? (
+                  <span className="h-2 w-2 rounded-full bg-[#3B82F6] animate-pulse" />
+                ) : null}
+              </span>
+            </button>
+            <AnswerStyleSelector value={answerStyle} onChange={setAnswerStyle} disabled={isStreaming} />
+          </div>
           <button
             type="button"
             onClick={handleSubmit}

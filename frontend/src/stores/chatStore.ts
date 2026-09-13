@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { toast } from "sonner";
 
 import type {
+  AnswerStyle,
   CompletionPayload,
   FeedbackValue,
   Message,
@@ -34,6 +35,7 @@ interface ChatState {
   isStreaming: boolean;
   isCreatingNew: boolean;
   deepThinkingEnabled: boolean;
+  answerStyle: AnswerStyle | null;
   thinkingStartAt: number | null;
   streamTaskId: string | null;
   streamAbort: (() => void) | null;
@@ -49,6 +51,7 @@ interface ChatState {
   selectSession: (sessionId: string) => Promise<void>;
   updateSessionTitle: (sessionId: string, title: string) => void;
   setDeepThinkingEnabled: (enabled: boolean) => void;
+  setAnswerStyle: (style: AnswerStyle | null) => void;
   sendMessage: (content: string) => Promise<void>;
   cancelGeneration: () => void;
   appendStreamContent: (delta: string) => void;
@@ -100,6 +103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   isCreatingNew: false,
   deepThinkingEnabled: false,
+  answerStyle: null,
   thinkingStartAt: null,
   streamTaskId: null,
   streamAbort: null,
@@ -137,6 +141,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isLoading: false,
         thinkingStartAt: null,
         deepThinkingEnabled: false,
+        answerStyle: null,
         openedSourceMessageId: null
       });
       return "";
@@ -151,6 +156,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isLoading: false,
       isCreatingNew: true,
       deepThinkingEnabled: false,
+      answerStyle: null,
       thinkingStartAt: null,
       streamTaskId: null,
       streamAbort: null,
@@ -249,6 +255,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setDeepThinkingEnabled: (enabled) => {
     set({ deepThinkingEnabled: enabled });
   },
+  setAnswerStyle: (style) => {
+    set({ answerStyle: style });
+  },
   sendMessage: async (content) => {
     const trimmed = content.trim();
     if (!trimmed) return;
@@ -297,7 +306,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const query = buildQuery({
       question: trimmed,
       conversationId: conversationId || undefined,
-      deepThinking: deepThinkingEnabled ? true : undefined
+      deepThinking: deepThinkingEnabled ? true : undefined,
+      answerStyle: get().answerStyle ?? undefined
     });
     const url = `${API_BASE_URL}/rag/v3/chat${query}`;
     const token = storage.getToken();

@@ -58,6 +58,15 @@ class RAGPromptServiceTest {
                 .build();
     }
 
+    private static PromptContext kbContextWithStyle(AnswerStyle style) {
+        return PromptContext.builder()
+                .kbContext("<content ref=\"1\">资料</content>")
+                .kbIntents(List.of())
+                .eligibleIntentIds(Set.of())
+                .answerStyle(style)
+                .build();
+    }
+
     @Test
     void includesCitationRulesFromKnowledgePrompt() {
         String result = service(true).buildSystemPrompt(kbContext());
@@ -89,6 +98,41 @@ class RAGPromptServiceTest {
         assertFalse(result.contains("# 行内引用规则"));
         assertFalse(result.contains("#cite-"), "关闭引用时不得向模型提及角标格式");
         assertFalse(result.contains("ref=\""), "关闭引用时上下文不注入编号，提示词也不应描述该属性");
+    }
+
+    @Test
+    void appendsStyleInstructionBeforeCitationRules() {
+        String result = service(true).buildSystemPrompt(kbContextWithStyle(AnswerStyle.FORMAL));
+
+        // 风格管语气、引用管格式：基础模板 < 风格指令 < 引用规则
+        int base = result.indexOf("# 桩基础模板");
+        int instruction = result.indexOf(AnswerStyle.FORMAL.systemInstruction());
+        int citation = result.indexOf("# 行内引用规则");
+        assertTrue(base >= 0 && instruction > base && citation > instruction,
+                "风格指令必须追加在基础模板之后、引用规则之前");
+    }
+
+    @Test
+    void appendsStyleInstructionWhenCitationDisabled() {
+        String result = service(false).buildSystemPrompt(kbContextWithStyle(AnswerStyle.CONCISE));
+
+        assertFalse(result.contains("# 行内引用规则"));
+        assertTrue(result.endsWith(AnswerStyle.CONCISE.systemInstruction()),
+                "引用开关关闭时风格指令仍是最后一条语气约束");
+    }
+
+    @Test
+    void omitsStyleInstructionByDefault() {
+        String result = service(true).buildSystemPrompt(kbContext());
+
+        assertFalse(result.contains("【回答风格】"), "不指定风格时不得注入风格指令");
+    }
+
+    @Test
+    void omitsStyleInstructionForNullStyle() {
+        String result = service(true).buildSystemPrompt(kbContextWithStyle(null));
+
+        assertFalse(result.contains("【回答风格】"), "显式 null 与缺省等价，同样不注入");
     }
 
     @Test

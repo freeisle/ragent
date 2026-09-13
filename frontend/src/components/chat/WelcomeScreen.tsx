@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ArrowUpRight, BookOpen, Bot, Brain, Check, Lightbulb, Send, Square } from "lucide-react";
 
+import { AnswerStyleSelector } from "@/components/common/AnswerStyleSelector";
 import { cn } from "@/lib/utils";
 import { listSampleQuestions } from "@/services/sampleQuestionService";
 import { useChatStore } from "@/stores/chatStore";
@@ -42,8 +43,15 @@ export function WelcomeScreen() {
   const [promptPresets, setPromptPresets] = React.useState<PromptPreset[]>(DEFAULT_PRESETS);
   const isComposingRef = React.useRef(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-  const { sendMessage, isStreaming, cancelGeneration, deepThinkingEnabled, setDeepThinkingEnabled } =
-    useChatStore();
+  const {
+    sendMessage,
+    isStreaming,
+    cancelGeneration,
+    deepThinkingEnabled,
+    setDeepThinkingEnabled,
+    answerStyle,
+    setAnswerStyle
+  } = useChatStore();
 
   const focusInput = React.useCallback(() => {
     const el = textareaRef.current;
@@ -226,6 +234,7 @@ export function WelcomeScreen() {
                   ) : null}
                 </span>
               </button>
+              <AnswerStyleSelector value={answerStyle} onChange={setAnswerStyle} disabled={isStreaming} />
               <button
                 type="button"
                 onClick={handleSubmit}

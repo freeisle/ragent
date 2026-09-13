@@ -64,6 +64,11 @@ public class PromptContext {
     private Set<String> eligibleIntentIds = Set.of();
 
     /**
+     * 回答风格；null 表示不注入风格指令（保持默认行为）
+     */
+    private AnswerStyle answerStyle;
+
+    /**
      * 是否包含 MCP 上下文
      */
     public boolean hasMcp() {

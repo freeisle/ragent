@@ -24,14 +24,18 @@ import com.nageoffer.ai.ragent.agent.tool.AgentToolCatalog;
 import com.nageoffer.ai.ragent.agent.tool.AgentToolCatalog.ResolvedCatalog;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptResolver;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptSlot;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * 主 Agent 供给器：单例复用，AGENT_MAIN 人设或工具目录变化时懒重建
+ * 主 Agent 供给器：按回答风格分实例缓存复用，AGENT_MAIN 人设或工具目录变化时懒重建
  * 会话状态在 PgAgentStateStore 中按次加载，重建不丢历史
  */
 @Slf4j
@@ -49,28 +53,40 @@ public class ReActAgentProvider {
     private final AgentProperties agentProperties;
     private final AgentContextCompactionMiddleware contextCompactionMiddleware;
 
-    private volatile CachedAgent cached;
+    private final Map<AnswerStyle, CachedAgent> cachedByStyle = new ConcurrentHashMap<>();
+
+    /**
+     * 默认风格（与现状完全一致）
+     */
+    public ActiveAgent getAgent() {
+        return getAgent(null);
+    }
 
     /**
      * 以人设内容和工具目录签名判断重建时机：控制台修改后无需重启，下一次会话生效
      * 目录只解析一次，指纹与 Toolkit 同源，快照随实例一起返回给调用方
+     * <p>
+     * 按风格分键缓存：AgentScope 的系统提示词在构建时固化，请求级风格只能落到不同实例上；
+     * 实例数上限是风格枚举数 + 1，且只懒构建实际用到的风格
      */
-    public ActiveAgent getAgent() {
+    public ActiveAgent getAgent(AnswerStyle style) {
+        AnswerStyle key = style == null ? AnswerStyle.NONE : style;
         String persona = resolvePersona();
         ResolvedCatalog catalog = toolCatalog.resolve();
-        CachedAgent current = cached;
+        CachedAgent current = cachedByStyle.get(key);
         if (matches(current, persona, catalog)) {
             return new ActiveAgent(current.agent(), current.catalog());
         }
         synchronized (this) {
-            current = cached;
+            current = cachedByStyle.get(key);
             if (matches(current, persona, catalog)) {
                 return new ActiveAgent(current.agent(), current.catalog());
             }
             // 旧实例不主动 close：在途会话仍在其上流式输出，交由 GC 回收
-            ReActAgent agent = buildAgent(persona, catalog);
-            cached = new CachedAgent(persona, catalog, agent);
-            log.info("ReActAgent 已构建, maxIters: {}, maxRetries: {}",
+            ReActAgent agent = buildAgent(persona, key, catalog);
+            cachedByStyle.put(key, new CachedAgent(persona, catalog, agent));
+            log.info("ReActAgent 已构建, style: {}, maxIters: {}, maxRetries: {}",
+                    key == AnswerStyle.NONE ? "default" : key.getValue(),
                     agentProperties.getMaxIters(), agentProperties.getMaxRetries());
             return new ActiveAgent(agent, catalog);
         }
@@ -81,11 +97,7 @@ public class ReActAgentProvider {
      * 仅本节点有效，多节点各持一份缓存，需要时经 Redis 广播补齐
      */
     public void evictStateCache(String userId, String sessionId) {
-        CachedAgent current = cached;
-        if (current == null) {
-            return;
-        }
-        current.agent().clearStateCache(userId, sessionId);
+        cachedByStyle.values().forEach(entry -> entry.agent().clearStateCache(userId, sessionId));
     }
 
     private boolean matches(CachedAgent current, String persona, ResolvedCatalog catalog) {
@@ -94,10 +106,10 @@ public class ReActAgentProvider {
                 && current.catalog().fingerprint().equals(catalog.fingerprint());
     }
 
-    private ReActAgent buildAgent(String persona, ResolvedCatalog catalog) {
+    ReActAgent buildAgent(String persona, AnswerStyle style, ResolvedCatalog catalog) {
         return ReActAgent.builder()
                 .name(AGENT_NAME)
-                .sysPrompt(persona)
+                .sysPrompt(composePersona(persona, style))
                 .model(agentChatModel)
                 .toolkit(toolCatalog.buildToolkit(catalog))
                 .maxIters(agentProperties.getMaxIters())
@@ -105,6 +117,14 @@ public class ReActAgentProvider {
                 .stateStore(agentStateStore)
                 .middleware(contextCompactionMiddleware)
                 .build();
+    }
+
+    /**
+     * 人设 + 风格指令拼接；纯函数便于单测。NONE / null 时原样返回人设
+     */
+    static String composePersona(String persona, AnswerStyle style) {
+        String instruction = style == null ? null : style.systemInstruction();
+        return StrUtil.isBlank(instruction) ? persona : persona + "\n\n" + instruction;
     }
 
     private String resolvePersona() {

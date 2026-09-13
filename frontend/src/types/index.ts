@@ -1,5 +1,7 @@
 export type Role = "user" | "assistant";
 
+export type AnswerStyle = "formal" | "casual" | "concise";
+
 export type FeedbackValue = "like" | "dislike" | null;
 
 export type MessageStatus = "streaming" | "done" | "cancelled" | "error";

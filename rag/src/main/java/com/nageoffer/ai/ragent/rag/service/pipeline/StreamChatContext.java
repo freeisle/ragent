@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.rag.service.pipeline;
 
 import com.nageoffer.ai.ragent.framework.convention.ChatMessage;
 import com.nageoffer.ai.ragent.infra.chat.StreamCallback;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import com.nageoffer.ai.ragent.rag.core.rewrite.RewriteResult;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
 import lombok.Builder;
@@ -40,6 +41,12 @@ public class StreamChatContext {
     private final String conversationId;
     private final String taskId;
     private final boolean deepThinking;
+
+    /**
+     * 回答风格；null 表示不注入风格指令（保持默认行为）
+     */
+    private final AnswerStyle answerStyle;
+
     private final String userId;
     private final StreamCallback callback;
 

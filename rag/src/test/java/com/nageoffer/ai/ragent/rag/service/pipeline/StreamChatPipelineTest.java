@@ -17,6 +17,9 @@
 
 package com.nageoffer.ai.ragent.rag.service.pipeline;
 
+import com.nageoffer.ai.ragent.framework.convention.ChatMessage;
+import com.nageoffer.ai.ragent.framework.convention.ChatRequest;
+import com.nageoffer.ai.ragent.framework.web.StreamTaskManager;
 import com.nageoffer.ai.ragent.infra.chat.LLMService;
 import com.nageoffer.ai.ragent.infra.chat.StreamCallback;
 import com.nageoffer.ai.ragent.rag.core.guidance.GuidanceDecision;
@@ -24,6 +27,8 @@ import com.nageoffer.ai.ragent.rag.core.guidance.IntentGuidanceService;
 import com.nageoffer.ai.ragent.rag.core.intent.IntentResolver;
 import com.nageoffer.ai.ragent.rag.core.memory.ConversationMemoryService;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptResolver;
+import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptSlot;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import com.nageoffer.ai.ragent.rag.core.prompt.PromptContext;
 import com.nageoffer.ai.ragent.rag.core.prompt.RAGPromptService;
 import com.nageoffer.ai.ragent.rag.core.retrieval.RetrievalEngine;
@@ -35,7 +40,6 @@ import com.nageoffer.ai.ragent.rag.core.source.SourcesAssembler;
 import com.nageoffer.ai.ragent.rag.dto.IntentGroup;
 import com.nageoffer.ai.ragent.rag.dto.RetrievalContext;
 import com.nageoffer.ai.ragent.rag.dto.SubQuestionIntent;
-import com.nageoffer.ai.ragent.framework.web.StreamTaskManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -119,5 +123,74 @@ class StreamChatPipelineTest {
         ArgumentCaptor<PromptContext> promptContext = ArgumentCaptor.forClass(PromptContext.class);
         verify(promptBuilder).buildStructuredMessages(promptContext.capture(), anyList(), any(), anyList());
         assertEquals(eligibleIntentIds, promptContext.getValue().getEligibleIntentIds());
+    }
+
+    @Test
+    void passesAnswerStyleToPromptContext() {
+        StreamCallback callback = org.mockito.Mockito.mock(StreamCallback.class);
+        RewriteResult rewriteResult = new RewriteResult("改写问题", List.of("改写问题"));
+        List<SubQuestionIntent> subIntents = List.of(new SubQuestionIntent("改写问题", List.of()));
+        RetrievalContext retrievalContext = RetrievalContext.builder()
+                .kbContext("<content>资料</content>")
+                .intentChunks(Map.of())
+                .eligibleIntentIds(Set.of())
+                .build();
+
+        when(memoryService.load("conversation-1", "user-1")).thenReturn(List.of());
+        when(memoryService.append(any(), any(), any())).thenReturn("message-1");
+        when(queryRewriteService.rewriteWithSplit("原问题", List.of())).thenReturn(rewriteResult);
+        when(intentResolver.resolve(rewriteResult)).thenReturn(subIntents);
+        when(guidanceService.detectAmbiguity("改写问题", subIntents)).thenReturn(GuidanceDecision.none());
+        when(intentResolver.isSystemOnly(anyList())).thenReturn(false);
+        when(retrievalEngine.retrieve(subIntents)).thenReturn(retrievalContext);
+        when(intentResolver.mergeIntentGroup(subIntents)).thenReturn(new IntentGroup(List.of(), List.of()));
+        when(citationContextEnricher.enrich("<content>资料</content>", List.of()))
+                .thenReturn("<content>资料</content>");
+        when(promptBuilder.buildStructuredMessages(any(), anyList(), any(), anyList())).thenReturn(List.of());
+
+        pipeline.execute(StreamChatContext.builder()
+                .question("原问题")
+                .conversationId("conversation-1")
+                .taskId("task-1")
+                .userId("user-1")
+                .answerStyle(AnswerStyle.CONCISE)
+                .callback(callback)
+                .build());
+
+        ArgumentCaptor<PromptContext> promptContext = ArgumentCaptor.forClass(PromptContext.class);
+        verify(promptBuilder).buildStructuredMessages(promptContext.capture(), anyList(), any(), anyList());
+        assertEquals(AnswerStyle.CONCISE, promptContext.getValue().getAnswerStyle(),
+                "请求级风格必须原样进入 PromptContext，最终由 RAGPromptService 注入系统提示词");
+    }
+
+    @Test
+    void passesAnswerStyleToSystemOnlyPrompt() {
+        // 纯聊天兜底路不经过 RAGPromptService，风格指令要在 SYSTEM_CHAT 提示词上就地追加
+        StreamCallback callback = org.mockito.Mockito.mock(StreamCallback.class);
+        RewriteResult rewriteResult = new RewriteResult("改写问题", List.of("改写问题"));
+        List<SubQuestionIntent> subIntents = List.of(new SubQuestionIntent("改写问题", List.of()));
+
+        when(memoryService.load("conversation-1", "user-1")).thenReturn(List.of());
+        when(memoryService.append(any(), any(), any())).thenReturn("message-1");
+        when(queryRewriteService.rewriteWithSplit("原问题", List.of())).thenReturn(rewriteResult);
+        when(intentResolver.resolve(rewriteResult)).thenReturn(subIntents);
+        when(guidanceService.detectAmbiguity("改写问题", subIntents)).thenReturn(GuidanceDecision.none());
+        when(intentResolver.isSystemOnly(anyList())).thenReturn(true);
+        when(agentPromptResolver.resolve(AgentPromptSlot.SYSTEM_CHAT)).thenReturn("# 系统聊天助手");
+
+        pipeline.execute(StreamChatContext.builder()
+                .question("原问题")
+                .conversationId("conversation-1")
+                .taskId("task-1")
+                .userId("user-1")
+                .answerStyle(AnswerStyle.CASUAL)
+                .callback(callback)
+                .build());
+
+        ArgumentCaptor<ChatRequest> chatRequest = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(llmService).streamChat(chatRequest.capture(), any());
+        ChatMessage systemMessage = chatRequest.getValue().getMessages().get(0);
+        assertEquals(AnswerStyle.applyInstruction("# 系统聊天助手", AnswerStyle.CASUAL),
+                systemMessage.getContent(), "系统提示词应为基础提示词 + 风格指令");
     }
 }

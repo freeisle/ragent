@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { ArrowUp, Square } from "lucide-react";
 
+import { AnswerStyleSelector } from "@/components/common/AnswerStyleSelector";
 import { useAgentChatStore } from "@/stores/agentChatStore";
 
 // 无深度思考开关：Agent 自主规划是否思考
@@ -9,7 +10,7 @@ export function AgentChatInput() {
   const [value, setValue] = React.useState("");
   const isComposingRef = React.useRef(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-  const { sendMessage, isStreaming, cancelGeneration, inputFocusKey, draft } =
+  const { sendMessage, isStreaming, cancelGeneration, inputFocusKey, draft, answerStyle, setAnswerStyle } =
     useAgentChatStore();
 
   const focusInput = React.useCallback(() => {
@@ -106,6 +107,10 @@ export function AgentChatInput() {
             <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
           </button>
         )}
+      </div>
+      {/* 风格选择贴发送钮一侧：与框同一行的右端，随流式禁用 */}
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <AnswerStyleSelector value={answerStyle} onChange={setAnswerStyle} disabled={isStreaming} />
       </div>
       {/* 免责一行在框外：框里不摆第二行是因为没有真控件 这句有真职责 */}
       <p className="agent-composer-note">内容由 AI 生成，请仔细甄别</p>

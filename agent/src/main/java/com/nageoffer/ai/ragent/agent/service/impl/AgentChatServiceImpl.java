@@ -32,6 +32,7 @@ import com.nageoffer.ai.ragent.agent.service.handler.AgentStreamEventBridge;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.web.SseEmitterSender;
 import com.nageoffer.ai.ragent.framework.web.StreamTaskManager;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -60,18 +61,19 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final AgentRunGate runGate;
 
     @Override
-    public void streamChat(String question, String conversationId, SseEmitter emitter) {
+    public void streamChat(String question, String conversationId, String answerStyle, SseEmitter emitter) {
         String userId = UserContext.getUserId();
         String actualConversationId = StrUtil.isBlank(conversationId)
                 ? IdUtil.getSnowflakeNextIdStr()
                 : conversationId;
         String taskId = IdUtil.getSnowflakeNextIdStr();
+        AnswerStyle style = AnswerStyle.of(answerStyle);
 
         // 闸门先于一切副作用：被拒的请求不该留下 META 事件、会话行与任务登记
         Runnable releaseGate = runGate.acquire(userId, taskId, actualConversationId);
         boolean started = false;
         try {
-            startRun(question, userId, actualConversationId, taskId, emitter, releaseGate);
+            startRun(question, userId, actualConversationId, taskId, emitter, releaseGate, style);
             started = true;
         } finally {
             // 启动期还没有收尾路可挂，就地归还闸门并撤销任务登记，否则该用户被挡到 TTL 过期
@@ -84,7 +86,7 @@ public class AgentChatServiceImpl implements AgentChatService {
     }
 
     private void startRun(String question, String userId, String conversationId, String taskId,
-                          SseEmitter emitter, Runnable releaseGate) {
+                          SseEmitter emitter, Runnable releaseGate, AnswerStyle style) {
         SseEmitterSender sender = new SseEmitterSender(emitter);
         sender.sendEvent(AgentSSEEventType.META.value(), new AgentMetaPayload(conversationId, taskId));
 
@@ -97,8 +99,8 @@ public class AgentChatServiceImpl implements AgentChatService {
         // 状态已在框架侧随本轮落库（正常完成与打断各自 save 后才发终答），下一轮从 PG 读回，代价是一次反序列化
         runHandle.onRelease(() -> agentProvider.evictStateCache(userId, conversationId));
         bindEmitterLifecycle(emitter, runHandle, taskId);
-        // 实例与目录快照成对取出：事件展示名与 Toolkit 出自同一次解析
-        ActiveAgent activeAgent = agentProvider.getAgent();
+        // 实例与目录快照成对取出：事件展示名与 Toolkit 出自同一次解析；风格决定用哪个系统提示词实例
+        ActiveAgent activeAgent = agentProvider.getAgent(style);
         AgentStreamEventBridge bridge = new AgentStreamEventBridge(AgentStreamEventBridge.Params.builder()
                 .runHandle(runHandle)
                 .conversationService(conversationService)

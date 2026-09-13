@@ -24,7 +24,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  */
 public interface AgentChatService {
 
-    void streamChat(String question, String conversationId, SseEmitter emitter);
+    /**
+     * @param answerStyle 回答风格（formal/casual/concise，可选，空或未知值按不指定处理）
+     */
+    void streamChat(String question, String conversationId, String answerStyle, SseEmitter emitter);
 
     void stopTask(String taskId);
 }

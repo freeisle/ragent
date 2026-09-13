@@ -13,6 +13,7 @@ import type {
   AgentSession,
   AgentToolProgress
 } from "@/types/agent";
+import type { AnswerStyle } from "@/types";
 import {
   batchDeleteAgentSessions,
   deleteAgentSession,
@@ -36,6 +37,7 @@ interface AgentChatState {
   draft: { text: string; key: number } | null;
   isStreaming: boolean;
   isCreatingNew: boolean;
+  answerStyle: AnswerStyle | null;
   streamTaskId: string | null;
   streamAbort: (() => void) | null;
   streamingMessageId: string | null;
@@ -52,6 +54,7 @@ interface AgentChatState {
   startNewChat: () => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
   setDraft: (text: string) => void;
+  setAnswerStyle: (style: AnswerStyle | null) => void;
   toggleBlockOpen: (messageId: string, blockId: number) => void;
   sendMessage: (question: string) => Promise<void>;
   cancelGeneration: () => void;
@@ -185,6 +188,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
     draft: null,
     isStreaming: false,
     isCreatingNew: false,
+    answerStyle: null,
     streamTaskId: null,
     streamAbort: null,
     streamingMessageId: null,
@@ -354,6 +358,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
         isStreaming: false,
         isLoading: false,
         isCreatingNew: true,
+        answerStyle: null,
         streamTaskId: null,
         streamAbort: null,
         streamingMessageId: null,
@@ -371,6 +376,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
     },
     setDraft: (text) => {
       set({ draft: { text, key: Date.now() } });
+    },
+    setAnswerStyle: (style) => {
+      set({ answerStyle: style });
     },
     toggleBlockOpen: (messageId, blockId) => {
       set((state) => ({
@@ -424,7 +432,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
       const conversationId = get().currentSessionId;
       const query = buildQuery({
         question: trimmed,
-        conversationId: conversationId || undefined
+        conversationId: conversationId || undefined,
+        answerStyle: get().answerStyle ?? undefined
       });
       const url = `${API_BASE_URL}/agent/v1/chat${query}`;
       const token = storage.getToken();

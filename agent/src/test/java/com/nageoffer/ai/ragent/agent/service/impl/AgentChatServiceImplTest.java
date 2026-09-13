@@ -26,6 +26,7 @@ import com.nageoffer.ai.ragent.framework.context.LoginUser;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.framework.web.StreamTaskManager;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import org.junit.jupiter.api.AfterEach;
@@ -76,7 +77,8 @@ class AgentChatServiceImplTest {
 
         gateReleased = new AtomicInteger();
         when(runGate.acquire(anyString(), anyString(), anyString())).thenReturn(gateReleased::incrementAndGet);
-        when(agentProvider.getAgent()).thenReturn(new ActiveAgent(
+        // 裸 any() 而不是 any(AnswerStyle.class)：不指定风格时实现传的是 null，any(Class) 不匹配 null
+        when(agentProvider.getAgent(any())).thenReturn(new ActiveAgent(
                 agent, new ResolvedCatalog("知识库工具描述", List.of(), List.of())));
         when(conversationService.touchConversation(anyString(), anyString(), anyString())).thenReturn("会话标题");
         when(conversationService.addUserMessage(anyString(), anyString(), anyString())).thenReturn("m-3003");
@@ -92,7 +94,7 @@ class AgentChatServiceImplTest {
     void shouldEvictStateCacheWhenStreamCompletes() {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
 
-        service.streamChat("问题", CONVERSATION_ID, new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
 
         // 不驱逐则每个 (用户, 会话) 的全量记忆在单例 Agent 里常驻到进程重启
         verify(agentProvider).evictStateCache(USER_ID, CONVERSATION_ID);
@@ -104,7 +106,7 @@ class AgentChatServiceImplTest {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.never());
         ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
         verify(taskManager).register(anyString(), anyString(), finalizer.capture());
         finalizer.getValue().run();
 
@@ -116,7 +118,7 @@ class AgentChatServiceImplTest {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
         ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
         verify(taskManager).register(anyString(), anyString(), finalizer.capture());
         finalizer.getValue().run();
 
@@ -127,7 +129,7 @@ class AgentChatServiceImplTest {
     void shouldReleaseGateWhenStreamCompletes() {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
 
-        service.streamChat("问题", CONVERSATION_ID, new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
 
         // 闸门不还，该用户到 TTL 过期前发不出下一轮
         assertThat(gateReleased.get()).isOne();
@@ -138,7 +140,7 @@ class AgentChatServiceImplTest {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.never());
         ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
         verify(taskManager).register(anyString(), anyString(), finalizer.capture());
         finalizer.getValue().run();
 
@@ -150,7 +152,7 @@ class AgentChatServiceImplTest {
         when(conversationService.touchConversation(anyString(), anyString(), anyString()))
                 .thenThrow(new IllegalStateException("库炸了"));
 
-        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, new SseEmitter()))
+        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter()))
                 .isInstanceOf(IllegalStateException.class);
 
         // 启动期失败还没有收尾路可挂，闸门要就地归还
@@ -162,7 +164,7 @@ class AgentChatServiceImplTest {
         when(conversationService.touchConversation(anyString(), anyString(), anyString()))
                 .thenThrow(new NoClassDefFoundError("类没了"));
 
-        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, new SseEmitter()))
+        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter()))
                 .isInstanceOf(NoClassDefFoundError.class);
 
         // 只接 RuntimeException 的话，启动段抛 Error 会把该用户挡到 TTL 过期（默认半小时）
@@ -174,7 +176,7 @@ class AgentChatServiceImplTest {
         when(agent.streamEvents(anyString(), any(RuntimeContext.class)))
                 .thenThrow(new IllegalStateException("上游没起来"));
 
-        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, new SseEmitter()))
+        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter()))
                 .isInstanceOf(IllegalStateException.class);
 
         // 已 register 未 unregister 的任务会守灵到 30 分钟 TTL，期间还能被取消去戳已丢弃的 emitter
@@ -186,7 +188,7 @@ class AgentChatServiceImplTest {
         when(runGate.acquire(anyString(), anyString(), anyString()))
                 .thenThrow(new ClientException("当前会话处理中，请稍后再发起新的对话"));
 
-        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, new SseEmitter()))
+        assertThatThrownBy(() -> service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter()))
                 .isInstanceOf(ClientException.class);
 
         // 被拒的请求不该留下会话行与任务登记，否则闸门反倒制造了脏数据
@@ -202,7 +204,7 @@ class AgentChatServiceImplTest {
         ArgumentCaptor<String> taskId = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Runnable> callbacks = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, emitter);
+        service.streamChat("问题", CONVERSATION_ID, null, emitter);
         verify(taskManager).register(taskId.capture(), anyString(), any());
         verify(emitter, atLeastOnce()).onTimeout(callbacks.capture());
         callbacks.getAllValues().forEach(Runnable::run);
@@ -218,7 +220,7 @@ class AgentChatServiceImplTest {
         ArgumentCaptor<String> taskId = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Consumer<Throwable>> callbacks = ArgumentCaptor.forClass(Consumer.class);
 
-        service.streamChat("问题", CONVERSATION_ID, emitter);
+        service.streamChat("问题", CONVERSATION_ID, null, emitter);
         verify(taskManager).register(taskId.capture(), anyString(), any());
         verify(emitter, atLeastOnce()).onError(callbacks.capture());
         callbacks.getAllValues().forEach(callback -> callback.accept(new IOException("客户端断开")));
@@ -233,7 +235,7 @@ class AgentChatServiceImplTest {
         ArgumentCaptor<String> taskId = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Runnable> callbacks = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, emitter);
+        service.streamChat("问题", CONVERSATION_ID, null, emitter);
         verify(taskManager).register(taskId.capture(), anyString(), any());
         verify(emitter, atLeastOnce()).onCompletion(callbacks.capture());
         callbacks.getAllValues().forEach(Runnable::run);
@@ -248,11 +250,32 @@ class AgentChatServiceImplTest {
         SseEmitter emitter = mock(SseEmitter.class);
         ArgumentCaptor<Runnable> callbacks = ArgumentCaptor.forClass(Runnable.class);
 
-        service.streamChat("问题", CONVERSATION_ID, emitter);
+        service.streamChat("问题", CONVERSATION_ID, null, emitter);
         verify(emitter, atLeastOnce()).onCompletion(callbacks.capture());
         callbacks.getAllValues().forEach(Runnable::run);
 
         // 正常完成也会触发 completion 回调，这里再取消等于每个请求都往 Redis 写一条 30 分钟死标记
         verify(taskManager, never()).cancel(anyString());
+    }
+
+    @Test
+    void shouldPassParsedStyleToProvider() {
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
+
+        service.streamChat("问题", CONVERSATION_ID, "FORMAL", new SseEmitter());
+
+        verify(agentProvider).getAgent(AnswerStyle.FORMAL);
+    }
+
+    @Test
+    void shouldPassNullForUnknownOrBlankStyle() {
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
+        ArgumentCaptor<AnswerStyle> styleCaptor = ArgumentCaptor.forClass(AnswerStyle.class);
+
+        service.streamChat("问题", CONVERSATION_ID, "bogus", new SseEmitter());
+        service.streamChat("问题", CONVERSATION_ID, null, new SseEmitter());
+
+        verify(agentProvider, times(2)).getAgent(styleCaptor.capture());
+        assertThat(styleCaptor.getAllValues()).containsOnlyNulls();
     }
 }

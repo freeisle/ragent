@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.agent.config;
 
+import com.nageoffer.ai.ragent.agent.memory.AgentContextCompactionMiddleware;
 import com.nageoffer.ai.ragent.agent.service.AgentConversationService;
 import com.nageoffer.ai.ragent.agent.state.PgAgentStateStore;
 import com.nageoffer.ai.ragent.agent.tool.AgentToolCatalog;
@@ -27,8 +28,10 @@ import com.nageoffer.ai.ragent.rag.core.mcp.McpToolExecutor;
 import com.nageoffer.ai.ragent.rag.core.mcp.McpToolRegistry;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptResolver;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptSlot;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import com.nageoffer.ai.ragent.rag.enums.IntentKind;
 import com.nageoffer.ai.ragent.rag.service.KnowledgeSearchFacade;
+import io.agentscope.core.ReActAgent;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
@@ -79,7 +82,8 @@ class ReActAgentProviderTest {
                 toolCatalog,
                 mock(OpenAIChatModel.class),
                 mock(PgAgentStateStore.class),
-                agentProperties);
+                agentProperties,
+                mock(AgentContextCompactionMiddleware.class));
     }
 
     @Test
@@ -132,6 +136,78 @@ class ReActAgentProviderTest {
         assertThat(active.catalog().displayNameOf(KnowledgeSearchTool.TOOL_NAME))
                 .isEqualTo(KnowledgeSearchTool.DISPLAY_NAME);
         assertThat(active.catalog().displayNameOf("unknown_query")).isEqualTo("unknown_query");
+    }
+
+    @Test
+    void shouldComposeStyleInstructionAfterPersona() {
+        String persona = "你是 Ragent";
+        String composed = ReActAgentProvider.composePersona(persona, AnswerStyle.CONCISE);
+
+        assertThat(composed).startsWith(persona);
+        assertThat(composed).contains(AnswerStyle.CONCISE.systemInstruction());
+        assertThat(composed).endsWith(AnswerStyle.CONCISE.systemInstruction());
+        assertThat(composed).contains(persona + "\n\n");
+    }
+
+    @Test
+    void shouldComposePersonaUnchangedWithoutStyle() {
+        String persona = "你是 Ragent";
+
+        assertThat(ReActAgentProvider.composePersona(persona, null)).isEqualTo(persona);
+        assertThat(ReActAgentProvider.composePersona(persona, AnswerStyle.NONE)).isEqualTo(persona);
+    }
+
+    @Test
+    void shouldUseDistinctAgentPerStyle() {
+        var formal = provider.getAgent(AnswerStyle.FORMAL);
+        var casual = provider.getAgent(AnswerStyle.CASUAL);
+        var formalAgain = provider.getAgent(AnswerStyle.FORMAL);
+        var defaultAgent = provider.getAgent();
+        var defaultAgain = provider.getAgent(null);
+
+        assertThat(casual.agent()).isNotSameAs(formal.agent());
+        assertThat(formalAgain.agent()).isSameAs(formal.agent());
+        assertThat(defaultAgain.agent()).isSameAs(defaultAgent.agent());
+    }
+
+    @Test
+    void shouldRebuildPerStyleWhenPersonaChanges() {
+        var formalBefore = provider.getAgent(AnswerStyle.FORMAL);
+        var casualBefore = provider.getAgent(AnswerStyle.CASUAL);
+
+        when(agentPromptResolver.resolve(AgentPromptSlot.AGENT_MAIN)).thenReturn("新的人设");
+
+        var formalAfter = provider.getAgent(AnswerStyle.FORMAL);
+        var casualAfter = provider.getAgent(AnswerStyle.CASUAL);
+
+        assertThat(formalAfter.agent()).isNotSameAs(formalBefore.agent());
+        assertThat(casualAfter.agent()).isNotSameAs(casualBefore.agent());
+    }
+
+    @Test
+    void shouldEvictStateCacheAcrossAllCachedStyles() {
+        ReActAgentProvider localProvider = new ReActAgentProvider(
+                agentPromptResolver,
+                toolCatalog,
+                mock(OpenAIChatModel.class),
+                mock(PgAgentStateStore.class),
+                new AgentProperties(),
+                mock(AgentContextCompactionMiddleware.class)) {
+            @Override
+            ReActAgent buildAgent(String persona, AnswerStyle style, AgentToolCatalog.ResolvedCatalog catalog) {
+                // 不走真实 AgentScope 构建：本用例只验证驱逐动作覆盖全部缓存键
+                return mock(ReActAgent.class);
+            }
+        };
+
+        ReActAgent formal = localProvider.getAgent(AnswerStyle.FORMAL).agent();
+        ReActAgent casual = localProvider.getAgent(AnswerStyle.CASUAL).agent();
+
+        // 状态驱逐不建实例：只清已缓存的那几个
+        localProvider.evictStateCache("user-1", "session-1");
+
+        verify(formal).clearStateCache("user-1", "session-1");
+        verify(casual).clearStateCache("user-1", "session-1");
     }
 
     private IntentNode mcpNode(String id, String name, String toolId) {

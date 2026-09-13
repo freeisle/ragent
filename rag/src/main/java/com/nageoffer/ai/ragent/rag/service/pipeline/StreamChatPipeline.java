@@ -31,6 +31,7 @@ import com.nageoffer.ai.ragent.rag.core.intent.IntentResolver;
 import com.nageoffer.ai.ragent.rag.core.memory.ConversationMemoryService;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptResolver;
 import com.nageoffer.ai.ragent.rag.core.prompt.AgentPromptSlot;
+import com.nageoffer.ai.ragent.rag.core.prompt.AnswerStyle;
 import com.nageoffer.ai.ragent.rag.core.prompt.PromptContext;
 import com.nageoffer.ai.ragent.rag.core.prompt.RAGPromptService;
 import com.nageoffer.ai.ragent.rag.core.retrieval.RetrievalEngine;
@@ -150,6 +151,7 @@ public class StreamChatPipeline {
                 ctx.getRewriteResult().rewrittenQuestion(),
                 ctx.getHistory(),
                 customPrompt,
+                ctx.getAnswerStyle(),
                 ctx.getCallback()
         );
         taskManager.bindHandle(ctx.getTaskId(), handle == null ? null : handle::cancel);
@@ -189,6 +191,7 @@ public class StreamChatPipeline {
                 mergedGroup,
                 ctx.getHistory(),
                 ctx.isDeepThinking(),
+                ctx.getAnswerStyle(),
                 ctx.getCallback()
         );
         taskManager.bindHandle(ctx.getTaskId(), handle == null ? null : handle::cancel);
@@ -197,10 +200,13 @@ public class StreamChatPipeline {
     // ==================== LLM 响应 ====================
 
     private StreamCancellationHandle streamSystemResponse(String question, List<ChatMessage> history,
-                                                          String customPrompt, StreamCallback callback) {
+                                                          String customPrompt, AnswerStyle answerStyle,
+                                                          StreamCallback callback) {
         String systemPrompt = StrUtil.isNotBlank(customPrompt)
                 ? customPrompt
                 : agentPromptResolver.resolve(AgentPromptSlot.SYSTEM_CHAT);
+        // 纯聊天兜底路不经过 RAGPromptService，风格指令在这里就地追加（同一份 applyInstruction 口径）
+        systemPrompt = AnswerStyle.applyInstruction(systemPrompt, answerStyle);
 
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
@@ -219,7 +225,7 @@ public class StreamChatPipeline {
 
     private StreamCancellationHandle streamLLMResponse(RewriteResult rewriteResult, RetrievalContext ctx,
                                                        IntentGroup intentGroup, List<ChatMessage> history,
-                                                       boolean deepThinking, StreamCallback callback) {
+                                                       boolean deepThinking, AnswerStyle answerStyle, StreamCallback callback) {
         PromptContext promptContext = PromptContext.builder()
                 .question(rewriteResult.rewrittenQuestion())
                 .mcpContext(ctx.getMcpContext())
@@ -227,6 +233,7 @@ public class StreamChatPipeline {
                 .mcpIntents(intentGroup.mcpIntents())
                 .kbIntents(intentGroup.kbIntents())
                 .eligibleIntentIds(ctx.getEligibleIntentIds())
+                .answerStyle(answerStyle)
                 .build();
 
         List<ChatMessage> messages = promptBuilder.buildStructuredMessages(

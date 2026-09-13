@@ -67,6 +67,11 @@ public class RAGPromptService {
                 ? plan.getBaseTemplate()
                 : defaultTemplate(plan.getScene());
         String systemPrompt = StrUtil.isBlank(template) ? "" : PromptTemplateUtils.cleanupPrompt(template);
+
+        // 回答风格指令追加在基础模板之后、引用规则之前：风格管语气、引用管格式；
+        // 放在引用规则的 early-return 之前，保证引用开关关闭时风格指令仍是最后一条语气约束
+        systemPrompt = AnswerStyle.applyInstruction(systemPrompt, context.getAnswerStyle());
+
         if (!citationEligible || !context.hasKb() || !Boolean.TRUE.equals(ragConfigProperties.getCitationEnabled())) {
             return systemPrompt;
         }
