@@ -426,3 +426,8 @@ Ragent 不只是教你调 API，而是让你理解一个 RAG 系统从 0 到 1 �
 <p align="center">
   如果屏幕前的亦菲/彦祖觉得项目还不错，点个 Star 支持一下，这是对开源作者最好的认可！
 </p>
+
+
+## Demo Note
+
+This PR is created for the Maintainer Copilot review demo.
